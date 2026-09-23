@@ -3,14 +3,22 @@ import { estimateTournament, type Gender } from '../engine';
 import { exportTournamentJson, parseTournamentJson } from '../state/storage';
 import {
   activePlayers,
+  activeTeams,
+  addTeam,
   createTournament,
   lockedRotationCount,
   newPlayerId,
+  participantCount,
   planSignature,
+  playersWithoutTeam,
   regeneratePlanning,
   removePlayer,
+  removeTeam,
+  setFormat,
   updateConfig,
+  type Format,
   type Player,
+  type TeamEntry,
   type Tournament,
   type TournamentConfig,
 } from '../state/tournament';
@@ -29,12 +37,19 @@ export default function ConfigView({ tournament: t, onChange, onGenerated }: Pro
   const [busy, setBusy] = useState(false);
   const confirm = useConfirm();
 
-  const players = activePlayers(config);
+  const teamsMode = config.format === 'teams';
+  const count = participantCount(config);
   const locked = lockedRotationCount(t);
   const started = locked > 0;
-  const absentCount = started ? 0 : config.absentFirstRotation.length;
+  const absentPlayers = new Set(config.absentFirstRotation);
+  const absentCount = started
+    ? 0
+    : teamsMode
+      ? activeTeams(config).filter((x) => x.players.some((p) => absentPlayers.has(p))).length
+      : config.absentFirstRotation.length;
   const estimate = estimateTournament({
-    playerCount: players.length,
+    playerCount: count,
+    perMatch: teamsMode ? 2 : 4,
     courts: config.courts,
     targetMatches: config.targetMatches,
     absentFirstCount: absentCount,
@@ -78,14 +93,20 @@ export default function ConfigView({ tournament: t, onChange, onGenerated }: Pro
         </label>
       </section>
 
-      <PlayersSection tournament={t} onChange={onChange} started={started} />
+      <FormatCard format={config.format} locked={started} onChange={(format) => onChange(setFormat(t, format))} />
+
+      {teamsMode ? (
+        <TeamsSection tournament={t} onChange={onChange} started={started} />
+      ) : (
+        <PlayersSection tournament={t} onChange={onChange} started={started} />
+      )}
 
       <section className="card">
         <h2>Paramètres</h2>
         <div className="grid-2">
           <NumberField label="Terrains" value={config.courts} min={1} max={20} onChange={(v) => set({ courts: v })} />
           <NumberField
-            label="Matchs par joueur"
+            label={teamsMode ? 'Matchs par équipe' : 'Matchs par joueur'}
             value={config.targetMatches}
             min={1}
             max={40}
@@ -124,6 +145,7 @@ export default function ConfigView({ tournament: t, onChange, onGenerated }: Pro
             onChange={(v) => set({ pointsPerMatch: v })}
           />
         </div>
+        {!teamsMode && (
         <label className="check">
           <input
             type="checkbox"
@@ -132,7 +154,8 @@ export default function ConfigView({ tournament: t, onChange, onGenerated }: Pro
           />
           Favoriser les équipes mixtes (H/F)
         </label>
-        {config.preferMixed && (
+        )}
+        {!teamsMode && config.preferMixed && (
           <label className="check sub">
             <input
               type="checkbox"
@@ -142,7 +165,7 @@ export default function ConfigView({ tournament: t, onChange, onGenerated }: Pro
             Mixité prioritaire sur la variété des adversaires
           </label>
         )}
-        {config.preferMixed && (
+        {!teamsMode && config.preferMixed && (
           <p className="hint">
             {config.mixedBeforeOpponents
               ? 'La mixité passe après l’égalité des matchs, les repos, les partenaires et les matchs identiques, mais avant la variété des adversaires.'
@@ -153,7 +176,8 @@ export default function ConfigView({ tournament: t, onChange, onGenerated }: Pro
 
       <FeasibilityCard
         estimate={estimate}
-        playerCount={players.length}
+        playerCount={count}
+        teamsMode={teamsMode}
         target={config.targetMatches}
         totalMinutes={config.totalMinutes}
         started={started}
@@ -325,6 +349,212 @@ function PlayersSection({
   );
 }
 
+function FormatCard({
+  format,
+  locked,
+  onChange,
+}: {
+  format: Format;
+  locked: boolean;
+  onChange: (format: Format) => void;
+}) {
+  const options: { value: Format; label: string; detail: string }[] = [
+    { value: 'individual', label: 'Individuel', detail: 'Un partenaire différent à chaque match' },
+    { value: 'teams', label: 'Par équipes', detail: 'Binômes fixes qui affrontent les autres binômes' },
+  ];
+  return (
+    <section className="card">
+      <h2>Format</h2>
+      <div className="format-toggle" role="radiogroup" aria-label="Format du tournoi">
+        {options.map((o) => (
+          <button
+            key={o.value}
+            role="radio"
+            aria-checked={format === o.value}
+            className={format === o.value ? 'on' : ''}
+            disabled={locked && format !== o.value}
+            onClick={() => onChange(o.value)}
+          >
+            <strong>{o.label}</strong>
+            <small>{o.detail}</small>
+          </button>
+        ))}
+      </div>
+      {locked && <p className="hint">Le format ne peut plus changer une fois des scores saisis.</p>}
+    </section>
+  );
+}
+
+function TeamsSection({
+  tournament: t,
+  onChange,
+  started,
+}: {
+  tournament: Tournament;
+  onChange: (t: Tournament) => void;
+  started: boolean;
+}) {
+  const config = t.config;
+  const [first, setFirst] = useState('');
+  const [second, setSecond] = useState('');
+  const [error, setError] = useState('');
+  const firstInput = useRef<HTMLInputElement>(null);
+  const confirm = useConfirm();
+  const byId = new Map(config.players.map((p) => [p.id, p]));
+  const active = activeTeams(config);
+  const withdrawn = config.teams.filter((x) => x.withdrawn);
+  const orphans = playersWithoutTeam(config);
+
+  function add() {
+    const a = first.trim();
+    const b = second.trim();
+    if (!a || !b) {
+      setError('Saisissez les deux joueurs de l’équipe.');
+      return;
+    }
+    const existing = new Set(config.players.map((p) => p.name.toLowerCase()));
+    const duplicates = [a, b].filter((n) => existing.has(n.toLowerCase()));
+    if (a.toLowerCase() === b.toLowerCase()) duplicates.push(b);
+    if (duplicates.length) {
+      setError(`Déjà présent : ${[...new Set(duplicates)].join(', ')}`);
+      return;
+    }
+    setError('');
+    setFirst('');
+    setSecond('');
+    onChange(addTeam(t, a, b));
+    firstInput.current?.focus();
+  }
+
+  const rename = (id: string, name: string) =>
+    onChange(updateConfig(t, { players: config.players.map((p) => (p.id === id ? { ...p, name } : p)) }));
+
+  async function remove(team: TeamEntry) {
+    const next = removeTeam(t, team.id);
+    if (next.config.teams.some((x) => x.id === team.id)) {
+      const ok = await confirm(
+        'Retirer cette équipe ?',
+        'Elle figure déjà dans le planning : ses matchs sont conservés, et elle sera exclue du planning futur après régénération.',
+        'Retirer',
+        true,
+      );
+      if (!ok) return;
+    }
+    onChange(next);
+  }
+
+  function toggleAbsent(team: TeamEntry) {
+    const set = new Set(config.absentFirstRotation);
+    const absent = team.players.some((p) => set.has(p));
+    for (const p of team.players) {
+      if (absent) set.delete(p);
+      else set.add(p);
+    }
+    onChange(updateConfig(t, { absentFirstRotation: [...set] }));
+  }
+
+  const reintegrate = (team: TeamEntry) =>
+    onChange(updateConfig(t, { teams: config.teams.map((x) => (x.id === team.id ? { ...x, withdrawn: undefined } : x)) }));
+
+  return (
+    <section className="card">
+      <h2>
+        Équipes <span className="count">{active.length}</span>
+      </h2>
+      <form
+        className="team-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          add();
+        }}
+      >
+        <input
+          ref={firstInput}
+          value={first}
+          placeholder="Joueur 1"
+          aria-label="Joueur 1 de la nouvelle équipe"
+          onChange={(e) => setFirst(e.target.value)}
+        />
+        <input
+          value={second}
+          placeholder="Joueur 2"
+          aria-label="Joueur 2 de la nouvelle équipe"
+          onChange={(e) => setSecond(e.target.value)}
+          enterKeyHint="done"
+        />
+        <button className="btn btn-primary" type="submit">
+          Ajouter l’équipe
+        </button>
+      </form>
+      {error && <p className="error">{error}</p>}
+
+      {orphans.length > 0 && (
+        <div className="banner banner-warn">
+          <p>Sans équipe (ignorés en mode par équipes) :</p>
+          {orphans.map((p) => (
+            <div key={p.id} className="orphan-row">
+              <span>{p.name}</span>
+              <button className="btn btn-small" onClick={() => onChange(removePlayer(t, p.id))}>
+                Supprimer
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <ul className="player-list">
+        {active.map((team, i) => {
+          const absent = team.players.some((p) => config.absentFirstRotation.includes(p));
+          return (
+            <li key={team.id} className="team-row">
+              <span className="player-num">{i + 1}</span>
+              {team.players.map((id, k) => (
+                <input
+                  key={id}
+                  className="player-name"
+                  value={byId.get(id)?.name ?? ''}
+                  aria-label={`Équipe ${i + 1}, joueur ${k + 1}`}
+                  onChange={(e) => rename(id, e.target.value)}
+                />
+              ))}
+              <button className="icon-btn" onClick={() => remove(team)} aria-label={`Retirer l’équipe ${i + 1}`}>
+                ✕
+              </button>
+              {!started && (
+                <button
+                  className={`chip team-absent ${absent ? 'chip-on' : ''}`}
+                  onClick={() => toggleAbsent(team)}
+                  title="Équipe absente à la première rotation"
+                >
+                  Absente R1
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+      {withdrawn.length > 0 && (
+        <>
+          <h3>Retirées</h3>
+          <ul className="player-list">
+            {withdrawn.map((team) => (
+              <li key={team.id} className="player-row withdrawn">
+                <span className="player-name-static">
+                  {team.players.map((id) => byId.get(id)?.name ?? '?').join(' & ')}
+                </span>
+                <button className="btn btn-small" onClick={() => reintegrate(team)}>
+                  Réintégrer
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  );
+}
+
 function GenderToggle({ value, onChange }: { value?: Gender; onChange: (g?: Gender) => void }) {
   return (
     <div className="segmented" role="group" aria-label="Sexe">
@@ -342,6 +572,7 @@ function GenderToggle({ value, onChange }: { value?: Gender; onChange: (g?: Gend
 function FeasibilityCard({
   estimate,
   playerCount,
+  teamsMode,
   target,
   totalMinutes,
   started,
@@ -349,6 +580,7 @@ function FeasibilityCard({
 }: {
   estimate: ReturnType<typeof estimateTournament>;
   playerCount: number;
+  teamsMode: boolean;
   target: number;
   totalMinutes: number;
   started: boolean;
@@ -367,6 +599,11 @@ function FeasibilityCard({
     );
   }
   const alternatives = estimate.suggestions.filter((m) => m !== target);
+  const perMatch = teamsMode ? 2 : 4;
+  const who = teamsMode ? 'équipes' : 'joueurs';
+  const everyone = teamsMode ? 'toutes les équipes joueront' : 'tous les joueurs joueront';
+  // Par équipes : N − 1 matchs = chaque équipe rencontre toutes les autres une fois.
+  const roundRobin = teamsMode && playerCount >= 2 ? playerCount - 1 : null;
   return (
     <section className="card">
       <h2>Faisabilité</h2>
@@ -391,12 +628,13 @@ function FeasibilityCard({
       </dl>
       {estimate.compatible ? (
         <div className="banner banner-ok">
-          {playerCount} × {target} / 4 = {(playerCount * target) / 4} matchs : tous les joueurs joueront exactement {target} matchs.
+          {playerCount} {who} × {target} / {perMatch} = {(playerCount * target) / perMatch} matchs : {everyone} exactement {target}{' '}
+          matchs.
         </div>
       ) : (
         <div className="banner banner-warn">
           <p>
-            {playerCount} × {target} / 4 n’est pas entier : impossible que chacun joue exactement {target} matchs
+            {playerCount} {who} × {target} / {perMatch} n’est pas entier : impossible que chacun joue exactement {target} matchs
             (certains en joueraient un de moins).
           </p>
           <div className="btn-row">
@@ -408,6 +646,14 @@ function FeasibilityCard({
           </div>
         </div>
       )}
+      {roundRobin !== null && roundRobin !== target && (
+        <div className="banner banner-ok">
+          <p>Avec {roundRobin} matchs par équipe, chaque équipe rencontre toutes les autres exactement une fois.</p>
+          <button className="btn btn-small btn-primary" onClick={() => onUseTarget(roundRobin)}>
+            Utiliser {roundRobin} matchs
+          </button>
+        </div>
+      )}
       {!estimate.fitsInTime && (
         <div className="banner banner-warn">
           <p>
@@ -416,7 +662,7 @@ function FeasibilityCard({
           </p>
           {estimate.maxTargetInTime !== null && estimate.maxTargetInTime !== target && (
             <button className="btn btn-small btn-primary" onClick={() => onUseTarget(estimate.maxTargetInTime!)}>
-              Utiliser {estimate.maxTargetInTime} matchs par joueur
+              Utiliser {estimate.maxTargetInTime} matchs par {teamsMode ? 'équipe' : 'joueur'}
             </button>
           )}
         </div>

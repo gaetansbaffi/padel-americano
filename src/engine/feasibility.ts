@@ -1,20 +1,25 @@
 // Calculs de faisabilité : compatibilité de la cible, taille des rotations,
 // estimation de durée.
+//
+// `perMatch` = nombre d'« entités » par match : 4 joueurs en Americano
+// individuel, 2 équipes en Americano par équipes.
 
-/** Un planning parfaitement équitable exige N × M / 4 entier. */
-export function isTargetCompatible(playerCount: number, target: number): boolean {
-  return playerCount >= 4 && target > 0 && (playerCount * target) % 4 === 0;
+export type PerMatch = 2 | 4;
+
+/** Un planning parfaitement équitable exige N × M / perMatch entier. */
+export function isTargetCompatible(count: number, target: number, perMatch: PerMatch = 4): boolean {
+  return count >= perMatch && target > 0 && (count * target) % perMatch === 0;
 }
 
 /**
  * Valeurs compatibles les plus proches de `target` (une ou deux valeurs à
  * égale distance, triées). Renvoie `[target]` si la cible est déjà valide.
  */
-export function nearestCompatibleTargets(playerCount: number, target: number): number[] {
-  if (playerCount < 4) return [];
+export function nearestCompatibleTargets(count: number, target: number, perMatch: PerMatch = 4): number[] {
+  if (count < perMatch) return [];
   for (let d = 0; d <= 4; d++) {
     const found = [target - d, target + d].filter(
-      (m, i) => (d > 0 || i === 0) && isTargetCompatible(playerCount, m),
+      (m, i) => (d > 0 || i === 0) && isTargetCompatible(count, m, perMatch),
     );
     if (found.length > 0) return found;
   }
@@ -22,14 +27,14 @@ export function nearestCompatibleTargets(playerCount: number, target: number): n
 }
 
 /**
- * Ajuste les besoins (matchs restants par joueur) pour que leur somme soit
- * divisible par 4. On retire un match aux joueurs ayant le plus gros besoin
- * (en partant de la fin de la liste en cas d'égalité) : l'écart final entre
- * joueurs reste au plus de 1.
+ * Ajuste les besoins (matchs restants par entité) pour que leur somme soit
+ * divisible par `perMatch`. On retire un match à ceux qui ont le plus gros
+ * besoin (en partant de la fin de la liste en cas d'égalité) : l'écart final
+ * reste au plus de 1.
  */
-export function trimNeeds(needs: number[]): number[] {
+export function trimNeeds(needs: number[], perMatch: PerMatch = 4): number[] {
   const result = needs.slice();
-  let excess = result.reduce((s, n) => s + n, 0) % 4;
+  let excess = result.reduce((s, n) => s + n, 0) % perMatch;
   while (excess > 0) {
     let best = -1;
     for (let i = result.length - 1; i >= 0; i--) {
@@ -44,7 +49,7 @@ export function trimNeeds(needs: number[]): number[] {
 
 /**
  * Nombre de matchs par rotation. On cherche le plus petit nombre de rotations
- * compatible avec le nombre de terrains, les joueurs disponibles et les
+ * compatible avec le nombre de terrains, les participants disponibles et les
  * absences à la première rotation, puis on répartit les matchs le plus
  * uniformément possible entre les rotations.
  */
@@ -52,14 +57,15 @@ export function planRotationSizes(
   needs: number[],
   absentFirst: boolean[],
   courts: number,
+  perMatch: PerMatch = 4,
 ): number[] {
-  const totalMatches = Math.floor(needs.reduce((s, n) => s + n, 0) / 4);
+  const totalMatches = Math.floor(needs.reduce((s, n) => s + n, 0) / perMatch);
   if (totalMatches === 0 || courts <= 0) return [];
 
   const eligible = needs.filter((n) => n > 0).length;
   const eligibleFirst = needs.filter((n, i) => n > 0 && !absentFirst[i]).length;
-  const capOther = Math.min(courts, Math.floor(eligible / 4));
-  const capFirst = Math.min(courts, Math.floor(eligibleFirst / 4));
+  const capOther = Math.min(courts, Math.floor(eligible / perMatch));
+  const capFirst = Math.min(courts, Math.floor(eligibleFirst / perMatch));
   if (capOther === 0) return [];
 
   const maxNeed = Math.max(...needs);
@@ -80,6 +86,7 @@ export function planRotationSizes(
 }
 
 export interface EstimateInput {
+  /** Nombre de joueurs (individuel) ou d'équipes (par équipes). */
   playerCount: number;
   courts: number;
   targetMatches: number;
@@ -87,6 +94,7 @@ export interface EstimateInput {
   totalMinutes: number;
   matchMinutes: number;
   breakMinutes: number;
+  perMatch?: PerMatch;
 }
 
 export interface TournamentEstimate {
@@ -104,9 +112,10 @@ export interface TournamentEstimate {
 }
 
 function rotationsFor(input: EstimateInput, target: number): number[] {
-  const needs = trimNeeds(new Array(input.playerCount).fill(target));
+  const perMatch = input.perMatch ?? 4;
+  const needs = trimNeeds(new Array(input.playerCount).fill(target), perMatch);
   const absent = needs.map((_, i) => i < input.absentFirstCount);
-  return planRotationSizes(needs, absent, input.courts);
+  return planRotationSizes(needs, absent, input.courts, perMatch);
 }
 
 function durationOf(rotations: number, input: EstimateInput): number {
@@ -115,10 +124,13 @@ function durationOf(rotations: number, input: EstimateInput): number {
 }
 
 export function estimateTournament(input: EstimateInput): TournamentEstimate {
+  const perMatch = input.perMatch ?? 4;
   const errors: string[] = [];
-  if (input.playerCount < 4) errors.push('Il faut au moins 4 joueurs.');
+  if (input.playerCount < perMatch) {
+    errors.push(perMatch === 4 ? 'Il faut au moins 4 joueurs.' : 'Il faut au moins 2 équipes.');
+  }
   if (input.courts < 1) errors.push('Il faut au moins 1 terrain.');
-  if (input.targetMatches < 1) errors.push('Le nombre de matchs par joueur doit être au moins 1.');
+  if (input.targetMatches < 1) errors.push('Le nombre de matchs doit être au moins 1.');
   if (input.matchMinutes < 1) errors.push('La durée des matchs doit être positive.');
 
   const sizes = errors.length ? [] : rotationsFor(input, input.targetMatches);
@@ -130,14 +142,14 @@ export function estimateTournament(input: EstimateInput): TournamentEstimate {
   let maxTargetInTime: number | null = null;
   if (!errors.length) {
     for (let m = 1; m <= 40; m++) {
-      if (!isTargetCompatible(input.playerCount, m)) continue;
+      if (!isTargetCompatible(input.playerCount, m, perMatch)) continue;
       if (rotationsFor(input, m).length <= maxRotationsInTime) maxTargetInTime = m;
     }
   }
 
   return {
-    compatible: isTargetCompatible(input.playerCount, input.targetMatches),
-    suggestions: nearestCompatibleTargets(input.playerCount, input.targetMatches),
+    compatible: isTargetCompatible(input.playerCount, input.targetMatches, perMatch),
+    suggestions: nearestCompatibleTargets(input.playerCount, input.targetMatches, perMatch),
     totalMatches: sizes.reduce((s, n) => s + n, 0),
     rotations,
     courtsUsed: Math.max(0, ...sizes),

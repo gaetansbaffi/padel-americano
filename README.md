@@ -51,6 +51,14 @@ src/
 Les rotations contenant un score sont verrouillées : une régénération ne recalcule
 que les rotations suivantes, en tenant compte de l'historique.
 
+### Mode par équipes
+
+Option « Format → Par équipes » : des binômes fixes affrontent les autres binômes
+(`src/engine/teams.ts`). Mêmes étapes avec 2 équipes par match : `équipes × matchs / 2`
+doit être entier ; avec `équipes − 1` matchs, chaque équipe rencontre toutes les autres
+exactement une fois. Jusqu'à 2 repos de suite sont tolérés (une alternance stricte
+séparerait les équipes en deux groupes qui ne se rencontrent jamais).
+
 ## Hébergement (Artifact claude.ai)
 
 ```bash

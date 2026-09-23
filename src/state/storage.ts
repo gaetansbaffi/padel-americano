@@ -1,6 +1,6 @@
 // Sauvegarde locale (localStorage) et import/export JSON.
 
-import type { Match, Player, Rotation, Tournament } from './tournament';
+import type { Match, Player, Rotation, TeamEntry, Tournament } from './tournament';
 
 export const STORAGE_KEY = 'padel-americano/tournament';
 
@@ -99,6 +99,16 @@ export function parseTournamentJson(text: string): Tournament {
 
   const players = c.players.map(checkPlayer);
   if (new Set(players.map((p) => p.id)).size !== players.length) fail('Identifiants de joueurs en double.');
+  const playerIds = new Set(players.map((p) => p.id));
+  // Champs ajoutés avec le mode par équipes : absents des anciens fichiers.
+  const teams: TeamEntry[] = Array.isArray(c.teams)
+    ? c.teams.map((x) => {
+        if (!isObj(x) || !isStr(x.id)) fail('Équipe invalide.');
+        const members = checkTeam(x.players, 'Équipe');
+        if (!members.every((id) => playerIds.has(id))) fail('Équipe : joueur inconnu.');
+        return x.withdrawn === true ? { id: x.id, players: members, withdrawn: true } : { id: x.id, players: members };
+      })
+    : [];
   const rotations = data.rotations.map(checkRotation);
   const known = new Set(players.map((p) => p.id));
   for (const r of rotations) {
@@ -119,7 +129,9 @@ export function parseTournamentJson(text: string): Tournament {
     version: 1,
     config: {
       name: c.name,
+      format: c.format === 'teams' ? 'teams' : 'individual',
       players,
+      teams,
       courts: num(c.courts, 'terrains', 1),
       totalMinutes: num(c.totalMinutes, 'durée disponible', 0),
       matchMinutes: num(c.matchMinutes, 'durée des matchs', 1),

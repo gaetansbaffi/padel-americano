@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react';
 import {
   currentRotationIndex,
   isRotationComplete,
+  participantLabels,
   setMatchScore,
   setTimer,
   type Match,
   type Rotation,
   type Tournament,
+  type TournamentConfig,
 } from '../state/tournament';
 import { rotationText } from '../state/share';
 import { scoreWarning } from '../state/scoreCheck';
@@ -116,14 +118,14 @@ export default function RotationView({ tournament: t, names, onChange, onGoToCon
         />
       ))}
 
-      <RestList rotation={rotation} names={names} />
+      <RestList rotation={rotation} names={names} config={t.config} />
 
       <ShareButton label={`Copier la rotation ${shown + 1}`} getText={() => rotationText(t, shown, names)} />
 
       {next && shown === current && (
         <section className="card next">
           <h2>Prochaine rotation ({current + 2})</h2>
-          <RotationSummary rotation={next} names={names} />
+          <RotationSummary rotation={next} names={names} config={t.config} />
           <ShareButton
             label={`Copier la rotation ${current + 2}`}
             className="btn btn-small"
@@ -135,25 +137,33 @@ export default function RotationView({ tournament: t, names, onChange, onGoToCon
   );
 }
 
-function RestList({ rotation, names }: { rotation: Rotation; names: Map<string, string> }) {
+function RestList({ rotation, names, config }: { rotation: Rotation; names: Map<string, string>; config: TournamentConfig }) {
   if (rotation.resting.length === 0 && rotation.absent.length === 0) return null;
   return (
     <section className="card rest">
       {rotation.resting.length > 0 && (
         <p>
-          <strong>Au repos :</strong> {rotation.resting.map((id) => names.get(id) ?? '?').join(', ')}
+          <strong>Au repos :</strong> {participantLabels(rotation.resting, config, names).join(', ')}
         </p>
       )}
       {rotation.absent.length > 0 && (
         <p>
-          <strong>Absents :</strong> {rotation.absent.map((id) => names.get(id) ?? '?').join(', ')}
+          <strong>Absents :</strong> {participantLabels(rotation.absent, config, names).join(', ')}
         </p>
       )}
     </section>
   );
 }
 
-export function RotationSummary({ rotation, names }: { rotation: Rotation; names: Map<string, string> }) {
+export function RotationSummary({
+  rotation,
+  names,
+  config,
+}: {
+  rotation: Rotation;
+  names: Map<string, string>;
+  config: TournamentConfig;
+}) {
   return (
     <>
       <ul className="summary">
@@ -172,10 +182,10 @@ export function RotationSummary({ rotation, names }: { rotation: Rotation; names
         ))}
       </ul>
       {rotation.resting.length > 0 && (
-        <p className="hint">Repos : {rotation.resting.map((id) => names.get(id) ?? '?').join(', ')}</p>
+        <p className="hint">Repos : {participantLabels(rotation.resting, config, names).join(', ')}</p>
       )}
       {rotation.absent.length > 0 && (
-        <p className="hint">Absents : {rotation.absent.map((id) => names.get(id) ?? '?').join(', ')}</p>
+        <p className="hint">Absents : {participantLabels(rotation.absent, config, names).join(', ')}</p>
       )}
     </>
   );

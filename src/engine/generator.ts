@@ -20,7 +20,7 @@
 // donc les contraintes absolues (pas de doublon dans un match, pas de joueur
 // sur deux terrains) sont vraies par construction.
 
-import { planRotationSizes, trimNeeds } from './feasibility';
+import { planRotationSizes, trimNeeds, type PerMatch } from './feasibility';
 import { createRng, randInt, shuffle, type Rng } from './rng';
 import type { GenerateInput, GenerateResult, PlannedRotation } from './types';
 
@@ -163,7 +163,7 @@ interface Candidate {
   score: Score;
 }
 
-interface PlayerState {
+export interface PlayerState {
   need: number[];
   restedLast: boolean[];
   playStreak: number[];
@@ -243,13 +243,14 @@ function chooseTied(
   return chosen;
 }
 
-/** Étape 3 : choix des joueurs de chaque rotation. */
-function selectPlayers(
+/** Étape 3 : choix des joueurs (ou des équipes) de chaque rotation. */
+export function selectPlayers(
   sizes: number[],
   courts: number,
   absentFirst: boolean[],
   initial: PlayerState,
   rng: Rng,
+  perMatch: PerMatch = 4,
 ): number[][] {
   const need = initial.need.slice();
   const restedLast = initial.restedLast.slice();
@@ -266,10 +267,10 @@ function selectPlayers(
     for (let i = 0; i < n; i++) {
       if (need[i] > 0 && !(r === 0 && absentFirst[i])) eligible.push(i);
     }
-    if (r >= sizes.length && eligible.length < 4) break;
+    if (r >= sizes.length && eligible.length < perMatch) break;
     const wanted =
-      r < sizes.length ? sizes[r] : Math.min(courts, Math.floor(eligible.length / 4));
-    const matches = Math.min(wanted, Math.floor(eligible.length / 4));
+      r < sizes.length ? sizes[r] : Math.min(courts, Math.floor(eligible.length / perMatch));
+    const matches = Math.min(wanted, Math.floor(eligible.length / perMatch));
 
     const priority = (a: number, b: number) =>
       need[b] - need[a] || Number(restedLast[b]) - Number(restedLast[a]);
@@ -281,7 +282,7 @@ function selectPlayers(
     // limite, on choisit ceux qui ont le moins joué ensemble jusqu'ici : sinon
     // les mêmes joueurs se reposent toujours ensemble et, sur un terrain, se
     // retrouvent toujours dans le même match (adversaires trop répétés).
-    const slots = matches * 4;
+    const slots = matches * perMatch;
     const playing: number[] = [];
     if (slots > 0) {
       const boundary = eligible[slots - 1];
@@ -315,7 +316,7 @@ function selectPlayers(
  * Sur un seul terrain, deux joueurs co-présents sont dans le même match : sans
  * cet équilibrage, certaines paires s'affrontent beaucoup trop souvent.
  */
-function balanceRests(
+export function balanceRests(
   sets: number[][],
   n: number,
   initial: PlayerState,
@@ -418,7 +419,7 @@ function balanceRests(
 }
 
 /** Métriques de repos : [séries de repos max, repos consécutifs, séries de matchs max]. */
-function restScore(playingSets: number[][], n: number, initial: PlayerState): Score {
+export function restScore(playingSets: number[][], n: number, initial: PlayerState): Score {
   let maxRestStreak = 0;
   let backToBack = 0;
   let maxPlayStreak = 0;
@@ -589,6 +590,34 @@ function buildCandidate(
   };
 }
 
+/**
+ * État de départ à partir des rotations déjà jouées : matchs joués, repos à
+ * la dernière rotation, séries de matchs, co-présence. `sets[r]` liste les
+ * participants (indices) de la rotation r. `need` reste à remplir.
+ */
+export function stateFromHistory(n: number, sets: number[][]): { initial: PlayerState; playedBefore: number[] } {
+  const playedBefore = new Array<number>(n).fill(0);
+  const initial: PlayerState = {
+    need: [],
+    restedLast: new Array<boolean>(n).fill(false),
+    playStreak: new Array<number>(n).fill(0),
+    together: new Int32Array(n * n),
+  };
+  for (const set of sets) {
+    const inRotation = new Array<boolean>(n).fill(false);
+    for (const i of set) {
+      playedBefore[i]++;
+      inRotation[i] = true;
+    }
+    for (const a of set) for (const b of set) if (a !== b) initial.together[a * n + b]++;
+    for (let i = 0; i < n; i++) {
+      initial.restedLast[i] = !inRotation[i];
+      initial.playStreak[i] = inRotation[i] ? initial.playStreak[i] + 1 : 0;
+    }
+  }
+  return { initial, playedBefore };
+}
+
 function genderCode(g: string | undefined): number {
   return g === 'H' ? 1 : g === 'F' ? 2 : 0;
 }
@@ -601,33 +630,17 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
   const historyRotations = input.history ?? [];
 
   // Historique : matchs joués, derniers repos, rencontres passées.
-  const playedBefore = new Array<number>(n).fill(0);
   const historyMatches: number[][] = [];
-  const initial: PlayerState = {
-    need: [],
-    restedLast: new Array<boolean>(n).fill(false),
-    playStreak: new Array<number>(n).fill(0),
-    together: new Int32Array(n * n),
-  };
-  for (const rot of historyRotations) {
-    const inRotation = new Array<boolean>(n).fill(false);
+  const historySets = historyRotations.map((rot) => {
+    const set: number[] = [];
     for (const m of rot.matches) {
       const four = [...m.teamA, ...m.teamB].map((id) => index.get(id) ?? -1);
-      for (const i of four) {
-        if (i >= 0) {
-          playedBefore[i]++;
-          inRotation[i] = true;
-        }
-      }
+      for (const i of four) if (i >= 0) set.push(i);
       if (four.every((i) => i >= 0)) historyMatches.push(four);
     }
-    const played = [...inRotation.keys()].filter((i) => inRotation[i]);
-    for (const a of played) for (const b of played) if (a !== b) initial.together[a * n + b]++;
-    for (let i = 0; i < n; i++) {
-      initial.restedLast[i] = !inRotation[i];
-      initial.playStreak[i] = inRotation[i] ? initial.playStreak[i] + 1 : 0;
-    }
-  }
+    return set;
+  });
+  const { initial, playedBefore } = stateFromHistory(n, historySets);
 
   const rawNeeds = ids.map((_, i) => Math.max(0, input.targetMatches - playedBefore[i]));
   initial.need = trimNeeds(rawNeeds);
