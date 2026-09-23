@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { loadTournament, saveTournament } from './state/storage';
+import { archiveTournament, recreateTournament, removeFromHistory, type ArchivedTournament } from './state/history';
+import { loadHistory, loadTournament, saveHistory, saveTournament } from './state/storage';
 import { createTournament, currentRotationIndex, type Tournament } from './state/tournament';
 import ConfigView from './views/ConfigView';
+import HistoryView from './views/HistoryView';
 import QualityView from './views/QualityView';
 import RotationView from './views/RotationView';
 import StandingsView from './views/StandingsView';
 
-type Tab = 'config' | 'rotation' | 'standings' | 'quality';
+type Tab = 'config' | 'rotation' | 'standings' | 'quality' | 'history';
 
 const icon = (path: ReactNode) => (
   <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -52,17 +54,43 @@ const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
       </>,
     ),
   },
+  {
+    id: 'history',
+    label: 'Historique',
+    icon: icon(
+      <>
+        <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+        <path d="M3 3v5h5M12 7v5l3 2" />
+      </>,
+    ),
+  },
 ];
 
 export default function App() {
   const [tournament, setTournament] = useState<Tournament>(() => loadTournament() ?? createTournament());
   const [tab, setTab] = useState<Tab>(() => (tournament.rotations.length ? 'rotation' : 'config'));
+  const [history, setHistory] = useState<ArchivedTournament[]>(() => loadHistory());
   const [saveFailed, setSaveFailed] = useState(false);
+  const [historyFailed, setHistoryFailed] = useState(false);
 
   // Sauvegarde automatique à chaque modification.
   useEffect(() => {
     setSaveFailed(!saveTournament(tournament));
   }, [tournament]);
+  useEffect(() => {
+    setHistoryFailed(!saveHistory(history));
+  }, [history]);
+
+  /** Remplace le tournoi en cours en rangeant l'ancien dans l'historique. */
+  function replaceTournament(next: Tournament) {
+    setHistory((h) => archiveTournament(h, tournament));
+    setTournament(next);
+  }
+
+  function recreateFromHistory(entry: ArchivedTournament) {
+    replaceTournament(recreateTournament(entry.tournament));
+    setTab('config');
+  }
 
   const names = useMemo(
     () => new Map(tournament.config.players.map((p) => [p.id, p.name])),
@@ -94,9 +122,19 @@ export default function App() {
           Sauvegarde locale impossible (stockage plein ou désactivé). Exportez le tournoi pour ne rien perdre.
         </div>
       )}
+      {historyFailed && !saveFailed && (
+        <div className="banner banner-error">
+          Historique plein : supprimez d’anciens tournois dans l’onglet Historique.
+        </div>
+      )}
       <main className="app-main">
         {tab === 'config' && (
-          <ConfigView tournament={tournament} onChange={setTournament} onGenerated={() => setTab('rotation')} />
+          <ConfigView
+            tournament={tournament}
+            onChange={setTournament}
+            onReplace={replaceTournament}
+            onGenerated={() => setTab('rotation')}
+          />
         )}
         {tab === 'rotation' && (
           <RotationView
@@ -109,6 +147,13 @@ export default function App() {
         )}
         {tab === 'standings' && <StandingsView tournament={tournament} />}
         {tab === 'quality' && <QualityView tournament={tournament} names={names} />}
+        {tab === 'history' && (
+          <HistoryView
+            history={history}
+            onRecreate={recreateFromHistory}
+            onDelete={(id) => setHistory((h) => removeFromHistory(h, id))}
+          />
+        )}
       </main>
       <nav className="tabbar">
         {TABS.map((t) => (

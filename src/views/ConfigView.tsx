@@ -22,16 +22,19 @@ import {
   type Tournament,
   type TournamentConfig,
 } from '../state/tournament';
+import { recreateTournament, shouldArchive } from '../state/history';
 import { useConfirm, useDialog } from './Dialog';
 import { formatDuration } from './format';
 
 interface Props {
   tournament: Tournament;
   onChange: (t: Tournament) => void;
+  /** Remplace le tournoi en cours (l'ancien est rangé dans l'historique). */
+  onReplace: (t: Tournament) => void;
   onGenerated: () => void;
 }
 
-export default function ConfigView({ tournament: t, onChange, onGenerated }: Props) {
+export default function ConfigView({ tournament: t, onChange, onReplace, onGenerated }: Props) {
   const config = t.config;
   const set = (patch: Partial<TournamentConfig>) => onChange(updateConfig(t, patch));
   const [busy, setBusy] = useState(false);
@@ -214,7 +217,7 @@ export default function ConfigView({ tournament: t, onChange, onGenerated }: Pro
         )}
       </section>
 
-      <DataSection tournament={t} onChange={onChange} />
+      <DataSection tournament={t} onReplace={onReplace} />
     </div>
   );
 }
@@ -676,7 +679,7 @@ function FeasibilityCard({
 // Export / import par copier-coller : fonctionne partout, y compris quand
 // le téléchargement de fichiers est bloqué. Le texte se transmet facilement
 // (WhatsApp, e-mail…) d'un appareil à l'autre.
-function DataSection({ tournament: t, onChange }: { tournament: Tournament; onChange: (t: Tournament) => void }) {
+function DataSection({ tournament: t, onReplace }: { tournament: Tournament; onReplace: (t: Tournament) => void }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const exportArea = useRef<HTMLTextAreaElement>(null);
   const [panel, setPanel] = useState<'export' | 'import' | null>(null);
@@ -709,14 +712,15 @@ function DataSection({ tournament: t, onChange }: { tournament: Tournament; onCh
       setMessage({ kind: 'error', text: `Import impossible : ${e instanceof Error ? e.message : String(e)}` });
       return;
     }
+    const archived = shouldArchive(t) ? ' Le tournoi actuel sera rangé dans l’Historique.' : '';
     const ok = await confirm(
       'Remplacer le tournoi actuel ?',
-      `Le tournoi « ${imported.config.name} » (${imported.config.players.length} joueurs) remplacera celui de cet appareil.`,
+      `Le tournoi « ${imported.config.name} » (${imported.config.players.length} joueurs) remplacera celui de cet appareil.${archived}`,
       'Remplacer',
       true,
     );
     if (!ok) return;
-    onChange(imported);
+    onReplace(imported);
     setPasted('');
     setPanel(null);
     setMessage(null);
@@ -725,32 +729,29 @@ function DataSection({ tournament: t, onChange }: { tournament: Tournament; onCh
   async function reset() {
     const choice = await choose({
       title: 'Nouveau tournoi ?',
-      message: 'Le tournoi actuel (planning et scores) sera effacé de cet appareil. Exportez-le d’abord pour le garder.',
+      message: shouldArchive(t)
+        ? 'Le tournoi actuel (planning et scores) sera rangé dans l’Historique, où vous pourrez le consulter ou le recréer.'
+        : 'La configuration actuelle sera effacée.',
       actions:
         t.config.players.length > 0
           ? [
-              { label: 'Garder les joueurs', value: 'keep', variant: 'primary' },
+              {
+                label: t.config.format === 'teams' ? 'Garder les équipes' : 'Garder les joueurs',
+                value: 'keep',
+                variant: 'primary',
+              },
               { label: 'Tout effacer', value: 'all', variant: 'danger' },
             ]
           : [{ label: 'Tout effacer', value: 'all', variant: 'danger' }],
     });
     if (!choice) return;
-    const fresh = createTournament();
-    onChange(
-      choice === 'keep'
-        ? updateConfig(fresh, {
-            players: activePlayers(t.config).map(({ id, name, gender }) => ({ id, name, gender })),
-            courts: t.config.courts,
-            preferMixed: t.config.preferMixed,
-          })
-        : fresh,
-    );
+    onReplace(choice === 'keep' ? recreateTournament(t) : createTournament());
   }
 
   return (
     <section className="card">
       <h2>Données</h2>
-      <p className="hint">Le tournoi est sauvegardé automatiquement sur cet appareil.</p>
+      <p className="hint">Le tournoi est sauvegardé automatiquement sur cet appareil. Les tournois précédents sont dans l’onglet Historique.</p>
       <div className="btn-row">
         <button className={`btn ${panel === 'export' ? 'btn-selected' : ''}`} onClick={() => open('export')}>
           Exporter

@@ -1,5 +1,6 @@
 // Sauvegarde locale (localStorage) et import/export JSON.
 
+import type { ArchivedTournament } from './history';
 import type { Match, Player, Rotation, TeamEntry, Tournament } from './tournament';
 
 export const STORAGE_KEY = 'padel-americano/tournament';
@@ -16,6 +17,36 @@ export function loadTournament(storage: Storage = localStorage): Tournament | nu
 export function saveTournament(t: Tournament, storage: Storage = localStorage): boolean {
   try {
     storage.setItem(STORAGE_KEY, JSON.stringify(t));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export const HISTORY_KEY = 'padel-americano/history';
+
+/** Historique sauvegardé ; les entrées illisibles sont ignorées. */
+export function loadHistory(storage: Storage = localStorage): ArchivedTournament[] {
+  try {
+    const raw = storage.getItem(HISTORY_KEY);
+    const data: unknown = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(data)) return [];
+    return data.flatMap((e) => {
+      if (!isObj(e) || !isStr(e.id) || !isStr(e.archivedAt)) return [];
+      try {
+        return [{ id: e.id, archivedAt: e.archivedAt, tournament: parseTournamentJson(JSON.stringify(e.tournament)) }];
+      } catch {
+        return [];
+      }
+    });
+  } catch {
+    return [];
+  }
+}
+
+export function saveHistory(history: ArchivedTournament[], storage: Storage = localStorage): boolean {
+  try {
+    storage.setItem(HISTORY_KEY, JSON.stringify(history));
     return true;
   } catch {
     return false;
