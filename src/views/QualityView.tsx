@@ -3,6 +3,12 @@ import { analyzeSchedule, findViolations } from '../engine';
 import type { Tournament } from '../state/tournament';
 import { RotationSummary } from './RotationView';
 
+/** Texte de référence d'un compteur de répétitions. */
+function minimumDetail(value: number, minimum: number): string {
+  if (minimum > 0 && value <= minimum) return `minimum possible : ${minimum}, impossible de faire moins`;
+  return `minimum théorique : ${minimum}`;
+}
+
 interface Props {
   tournament: Tournament;
   names: Map<string, string>;
@@ -41,7 +47,7 @@ export default function QualityView({ tournament: t, names }: Props) {
       label: 'Répétitions de partenaires',
       value: `${q.partnerRepeats}`,
       ok: q.partnerRepeats <= q.minPossiblePartnerRepeats,
-      detail: `minimum théorique : ${q.minPossiblePartnerRepeats}`,
+      detail: minimumDetail(q.partnerRepeats, q.minPossiblePartnerRepeats),
     },
     {
       label: 'Max de matchs avec le même partenaire',
@@ -52,8 +58,19 @@ export default function QualityView({ tournament: t, names }: Props) {
     {
       label: 'Répétitions d’adversaires',
       value: `${q.opponentRepeats}`,
-      ok: null,
-      detail: `max ${q.maxSameOpponent} fois le même adversaire`,
+      ok: q.opponentRepeats <= q.minPossibleOpponentRepeats,
+      detail: minimumDetail(q.opponentRepeats, q.minPossibleOpponentRepeats),
+    },
+    {
+      label: 'Max de matchs contre le même adversaire',
+      value: `${q.maxSameOpponent}`,
+      // L'idéal est une borne théorique, pas toujours atteignable avec les
+      // critères prioritaires : au-dessus, on reste neutre plutôt qu'en alerte.
+      ok: q.maxSameOpponent <= q.idealMaxSameOpponent ? true : null,
+      detail:
+        q.maxSameOpponent <= q.idealMaxSameOpponent
+          ? `idéal : ${q.idealMaxSameOpponent}`
+          : `idéal théorique : ${q.idealMaxSameOpponent} (pas toujours atteignable)`,
     },
     {
       label: 'Matchs identiques répétés',
@@ -90,6 +107,11 @@ export default function QualityView({ tournament: t, names }: Props) {
             </li>
           ))}
         </ul>
+        <p className="hint">
+          Une répétition = une rencontre de plus que la première : deux joueurs qui s’affrontent 3 fois comptent
+          pour 2 répétitions. Avec plus de matchs que d’adversaires possibles, certaines répétitions sont
+          inévitables ; le minimum indiqué est le meilleur résultat mathématiquement possible.
+        </p>
       </section>
 
       <section className="card table-card">

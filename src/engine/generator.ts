@@ -8,7 +8,9 @@
 //  3. Qui joue ? Rotation par rotation, on fait jouer les joueurs ayant le
 //     plus de matchs restants (ce choix glouton garantit que chacun atteint
 //     son quota). En cas d'égalité : priorité à ceux qui étaient au repos à
-//     la rotation précédente, puis à ceux qui ont le moins enchaîné de matchs.
+//     la rotation précédente, puis au groupe qui a le moins partagé le
+//     terrain. Le calendrier des repos est ensuite rééquilibré globalement
+//     (échanges de repos entre rotations, sans dégrader l'équité).
 //  4. Qui avec qui ? Recherche locale : on échange deux joueurs d'une même
 //     rotation tant que le score lexicographique ne se dégrade pas
 //     (partenaires > adversaires > matchs identiques > mixité).
@@ -131,18 +133,22 @@ class PairTracker {
   /**
    * Score à minimiser, critères réordonnés selon `order`. Ordre naturel :
    * [répétitions partenaires, max même partenaire, Σ carrés partenaires,
-   *  répétitions adversaires, max même adversaire, matchs identiques,
-   *  équipes non mixtes, Σ carrés adversaires].
+   *  répétitions adversaires, max même adversaire, paires à ce max,
+   *  matchs identiques, équipes non mixtes, Σ carrés adversaires].
    * Les sommes de carrés affinent la répartition (répétitions étalées plutôt
    * que concentrées) ; celle des adversaires n'est qu'un raffinement final.
    */
   score(order: number[]): Score {
+    const opponentMax = PairTracker.histMax(this.opponentHist);
     const raw = [
       this.partnerRepeats,
       PairTracker.histMax(this.partnerHist),
       this.partnerSq,
       this.opponentRepeats,
-      PairTracker.histMax(this.opponentHist),
+      opponentMax,
+      // Nombre de paires au maximum : donne à la recherche un cap pour faire
+      // baisser le maximum, une paire après l'autre.
+      opponentMax > 0 ? this.opponentHist[opponentMax] : 0,
       this.duplicates,
       this.nonMixed,
       this.opponentSq,
@@ -161,6 +167,80 @@ interface PlayerState {
   need: number[];
   restedLast: boolean[];
   playStreak: number[];
+  /** together[i * n + j] : rotations où i et j ont joué tous les deux. */
+  together: Int32Array;
+}
+
+/**
+ * Choisit `k` joueurs parmi des ex æquo de priorité. Critère : le groupe qui
+ * a le moins partagé le terrain (somme des co-présences de toutes ses paires,
+ * joueurs déjà retenus compris), puis le moins de matchs enchaînés. Les
+ * combinaisons sont toutes évaluées quand elles sont peu nombreuses, sinon
+ * choix glouton. `tied` est déjà dans un ordre aléatoire : à égalité, le
+ * premier trouvé gagne.
+ */
+function chooseTied(
+  tied: number[],
+  k: number,
+  fixed: number[],
+  together: Int32Array,
+  playStreak: number[],
+  n: number,
+): number[] {
+  if (k <= 0) return [];
+  if (k >= tied.length) return tied.slice(0, k);
+  const cost = (group: number[]) => {
+    let c = 0;
+    for (let x = 0; x < group.length; x++) {
+      const a = group[x];
+      c += playStreak[a];
+      for (const f of fixed) c += together[a * n + f] * 100;
+      for (let y = x + 1; y < group.length; y++) c += together[a * n + group[y]] * 100;
+    }
+    return c;
+  };
+
+  let combos = 1;
+  for (let i = 0; i < k; i++) combos = (combos * (tied.length - i)) / (i + 1);
+  if (combos <= 5000) {
+    let best: number[] = [];
+    let bestCost = Infinity;
+    const pick: number[] = [];
+    const walk = (start: number) => {
+      if (pick.length === k) {
+        const c = cost(pick);
+        if (c < bestCost) {
+          bestCost = c;
+          best = pick.slice();
+        }
+        return;
+      }
+      for (let i = start; i <= tied.length - (k - pick.length); i++) {
+        pick.push(tied[i]);
+        walk(i + 1);
+        pick.pop();
+      }
+    };
+    walk(0);
+    return best;
+  }
+
+  // Trop de combinaisons : ajout glouton du joueur le moins « déjà vu ».
+  const chosen: number[] = [];
+  while (chosen.length < k) {
+    let best = -1;
+    let bestCost = Infinity;
+    for (const c of tied) {
+      if (chosen.includes(c)) continue;
+      const cst = cost([...chosen, c]);
+      if (cst < bestCost) {
+        best = c;
+        bestCost = cst;
+      }
+    }
+    chosen.push(best);
+  }
+  return chosen;
 }
 
 /** Étape 3 : choix des joueurs de chaque rotation. */
@@ -174,6 +254,7 @@ function selectPlayers(
   const need = initial.need.slice();
   const restedLast = initial.restedLast.slice();
   const playStreak = initial.playStreak.slice();
+  const together = initial.together.slice();
   const n = need.length;
   const result: number[][] = [];
   // Garde-fou : quelques rotations supplémentaires si des besoins restent
@@ -190,21 +271,30 @@ function selectPlayers(
       r < sizes.length ? sizes[r] : Math.min(courts, Math.floor(eligible.length / 4));
     const matches = Math.min(wanted, Math.floor(eligible.length / 4));
 
+    const priority = (a: number, b: number) =>
+      need[b] - need[a] || Number(restedLast[b]) - Number(restedLast[a]);
     const tie = new Map<number, number>();
     for (const i of eligible) tie.set(i, rng());
-    eligible.sort(
-      (a, b) =>
-        need[b] - need[a] ||
-        Number(restedLast[b]) - Number(restedLast[a]) ||
-        playStreak[a] - playStreak[b] ||
-        tie.get(a)! - tie.get(b)!,
-    );
-    const playing = eligible.slice(0, matches * 4);
+    eligible.sort((a, b) => priority(a, b) || tie.get(a)! - tie.get(b)!);
+
+    // Les joueurs strictement prioritaires jouent. Parmi les ex æquo de la
+    // limite, on choisit ceux qui ont le moins joué ensemble jusqu'ici : sinon
+    // les mêmes joueurs se reposent toujours ensemble et, sur un terrain, se
+    // retrouvent toujours dans le même match (adversaires trop répétés).
+    const slots = matches * 4;
+    const playing: number[] = [];
+    if (slots > 0) {
+      const boundary = eligible[slots - 1];
+      const tied = eligible.filter((i) => priority(i, boundary) === 0);
+      playing.push(...eligible.filter((i) => priority(i, boundary) < 0));
+      playing.push(...chooseTied(tied, slots - playing.length, playing, together, playStreak, n));
+    }
     const isPlaying = new Array<boolean>(n).fill(false);
     for (const i of playing) {
       isPlaying[i] = true;
       need[i]--;
     }
+    for (const a of playing) for (const b of playing) if (a !== b) together[a * n + b]++;
     for (let i = 0; i < n; i++) {
       restedLast[i] = !isPlaying[i];
       playStreak[i] = isPlaying[i] ? playStreak[i] + 1 : 0;
@@ -214,6 +304,117 @@ function selectPlayers(
   // Supprime les rotations vides finales éventuelles.
   while (result.length > 0 && result[result.length - 1].length === 0) result.pop();
   return result;
+}
+
+/**
+ * Améliore le calendrier des repos dans son ensemble. Mouvement : x joue en
+ * r1 et se repose en r2, y l'inverse → on échange (le nombre de matchs de
+ * chacun ne change pas). On garde l'échange s'il équilibre la co-présence des
+ * joueurs sur le terrain (somme des carrés) sans dégrader les repos : pas plus
+ * de repos consécutifs, ni de séries de repos ou de matchs plus longues.
+ * Sur un seul terrain, deux joueurs co-présents sont dans le même match : sans
+ * cet équilibrage, certaines paires s'affrontent beaucoup trop souvent.
+ */
+function balanceRests(
+  sets: number[][],
+  n: number,
+  initial: PlayerState,
+  absentFirst: boolean[],
+  rng: Rng,
+): number[][] {
+  const R = sets.length;
+  if (R < 2) return sets;
+  const play = sets.map((s) => {
+    const row = new Array<boolean>(n).fill(false);
+    for (const i of s) row[i] = true;
+    return row;
+  });
+  const co = initial.together.slice();
+  for (const s of sets) for (const a of s) for (const b of s) if (a !== b) co[a * n + b]++;
+
+  // [repos consécutifs, plus longue série de repos, plus longue série de matchs]
+  const restStats = (i: number): [number, number, number] => {
+    let rest = initial.restedLast[i] ? 1 : 0;
+    let streak = initial.playStreak[i];
+    let b2b = 0;
+    let maxRest = 0;
+    let maxPlay = 0;
+    for (let r = 0; r < R; r++) {
+      if (play[r][i]) {
+        streak++;
+        rest = 0;
+      } else {
+        if (rest > 0) b2b++;
+        rest++;
+        streak = 0;
+      }
+      maxRest = Math.max(maxRest, rest);
+      maxPlay = Math.max(maxPlay, streak);
+    }
+    return [b2b, maxRest, maxPlay];
+  };
+  let limitRest = 0;
+  let limitPlay = 0;
+  for (let i = 0; i < n; i++) {
+    const [, mr, mp] = restStats(i);
+    limitRest = Math.max(limitRest, mr);
+    limitPlay = Math.max(limitPlay, mp);
+  }
+
+  const iterations = 300 * R;
+  for (let it = 0; it < iterations; it++) {
+    const r1 = randInt(rng, R);
+    const r2 = randInt(rng, R);
+    if (r1 === r2) continue;
+    const x = sets[r1][randInt(rng, sets[r1].length)];
+    if (x === undefined || play[r2][x] || (r2 === 0 && absentFirst[x])) continue;
+    const ys = sets[r2].filter((y) => !play[r1][y] && !(r1 === 0 && absentFirst[y]));
+    if (ys.length === 0) continue;
+    const y = ys[randInt(rng, ys.length)];
+
+    // Variation de la somme des carrés de co-présence.
+    let delta = 0;
+    for (let z = 0; z < n; z++) {
+      if (z === x || z === y) continue;
+      const d = Number(play[r2][z]) - Number(play[r1][z]);
+      if (d === 0) continue;
+      const cx = co[x * n + z];
+      const cy = co[y * n + z];
+      delta += (cx + d) ** 2 - cx ** 2 + (cy - d) ** 2 - cy ** 2;
+    }
+    if (delta > 0) continue;
+
+    const before = restStats(x)[0] + restStats(y)[0];
+    play[r1][x] = false;
+    play[r2][x] = true;
+    play[r2][y] = false;
+    play[r1][y] = true;
+    const sx = restStats(x);
+    const sy = restStats(y);
+    const ok =
+      sx[0] + sy[0] <= before &&
+      Math.max(sx[1], sy[1]) <= limitRest &&
+      Math.max(sx[2], sy[2]) <= limitPlay &&
+      (delta < 0 || rng() < 0.5);
+    if (!ok) {
+      play[r1][x] = true;
+      play[r2][x] = false;
+      play[r2][y] = true;
+      play[r1][y] = false;
+      continue;
+    }
+    sets[r1] = sets[r1].map((i) => (i === x ? y : i));
+    sets[r2] = sets[r2].map((i) => (i === y ? x : i));
+    for (let z = 0; z < n; z++) {
+      if (z === x || z === y) continue;
+      const d = Number(play[r2][z]) - Number(play[r1][z]);
+      co[x * n + z] += d;
+      co[z * n + x] += d;
+      co[y * n + z] -= d;
+      co[z * n + y] -= d;
+    }
+  }
+  return sets;
 }
 
 /** Métriques de repos : [séries de repos max, repos consécutifs, séries de matchs max]. */
@@ -241,9 +442,10 @@ function restScore(playingSets: number[][], n: number, initial: PlayerState): Sc
 }
 
 /** Ordre des critères de PairTracker.score() : celui du cahier des charges. */
-const STRICT_ORDER = [0, 1, 2, 3, 4, 5, 6, 7];
+const STRICT_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 /** Variante : la mixité passe avant la variété des adversaires. */
-const MIXED_PRIORITY_ORDER = [0, 1, 2, 5, 6, 3, 4, 7];
+const MIXED_PRIORITY_ORDER = [0, 1, 2, 6, 7, 3, 4, 5, 8];
+
 
 /**
  * Recherche locale itérée : descente par échanges de deux joueurs d'une même
@@ -356,7 +558,13 @@ function buildCandidate(
   rng: Rng,
 ): Candidate {
   const n = initial.need.length;
-  const playingSets = selectPlayers(sizes, courts, absentFirst, initial, rng);
+  const playingSets = balanceRests(
+    selectPlayers(sizes, courts, absentFirst, initial, rng),
+    n,
+    initial,
+    absentFirst,
+    rng,
+  );
 
   // Écart au quota : doit valoir 0 quand la configuration est réalisable.
   const played = new Array<number>(n).fill(0);
@@ -399,6 +607,7 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
     need: [],
     restedLast: new Array<boolean>(n).fill(false),
     playStreak: new Array<number>(n).fill(0),
+    together: new Int32Array(n * n),
   };
   for (const rot of historyRotations) {
     const inRotation = new Array<boolean>(n).fill(false);
@@ -412,6 +621,8 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
       }
       if (four.every((i) => i >= 0)) historyMatches.push(four);
     }
+    const played = [...inRotation.keys()].filter((i) => inRotation[i]);
+    for (const a of played) for (const b of played) if (a !== b) initial.together[a * n + b]++;
     for (let i = 0; i < n; i++) {
       initial.restedLast[i] = !inRotation[i];
       initial.playStreak[i] = inRotation[i] ? initial.playStreak[i] + 1 : 0;

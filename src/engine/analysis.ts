@@ -61,7 +61,18 @@ export interface ScheduleQuality {
   /** Borne inférieure théorique de `maxSamePartner`. */
   idealMaxSamePartner: number;
   opponentRepeats: number;
+  /**
+   * Borne inférieure de `opponentRepeats` : chaque joueur affronte 2
+   * adversaires par match, parmi seulement N − 1 autres joueurs.
+   */
+  minPossibleOpponentRepeats: number;
   maxSameOpponent: number;
+  /**
+   * Borne inférieure de `maxSameOpponent` (répartition parfaitement égale).
+   * Elle n'est pas toujours atteignable en même temps que les critères
+   * prioritaires (partenaires).
+   */
+  idealMaxSameOpponent: number;
   /** Matchs identiques (mêmes deux équipes) au-delà de la première occurrence. */
   identicalMatchRepeats: number;
   /** Équipes non mixtes (seulement parmi les joueurs dont le sexe est connu). */
@@ -170,7 +181,11 @@ export function analyzeSchedule(
     maxSamePartner: Math.max(0, ...pick((p) => p.maxSamePartner)),
     idealMaxSamePartner: Math.max(0, ...pick((p) => Math.ceil(p.matches / others))),
     opponentRepeats: repeats(opponents),
+    minPossibleOpponentRepeats: Math.ceil(
+      players.reduce((s, p) => s + Math.max(0, 2 * p.matches - others), 0) / 2,
+    ),
     maxSameOpponent: Math.max(0, ...pick((p) => p.maxSameOpponent)),
+    idealMaxSameOpponent: Math.max(0, ...pick((p) => Math.ceil((2 * p.matches) / others))),
     identicalMatchRepeats: repeats(matchKeys),
     nonMixedTeams,
     partnerCounts: partners,

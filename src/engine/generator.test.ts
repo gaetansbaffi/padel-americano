@@ -136,6 +136,44 @@ describe('generateSchedule – configurations prioritaires', () => {
   });
 });
 
+describe('generateSchedule – adversaires', () => {
+  it.each([
+    [5, 1],
+    [6, 1],
+    [7, 1],
+    [8, 2],
+    [9, 2],
+    [10, 2],
+    [11, 2],
+    [12, 3],
+    [13, 3],
+    [14, 3],
+  ])('%i joueurs / %i terrain(s) : répétitions d’adversaires au minimum théorique', (n, courts) => {
+    for (const seed of [1, 2]) {
+      const { quality } = run({ n, courts, target: 8, seed });
+      expect(quality.opponentRepeats).toBe(quality.minPossibleOpponentRepeats);
+    }
+  });
+
+  it.each([5, 6, 7])(
+    '%i joueurs / 1 terrain : personne n’affronte le même joueur plus que l’idéal',
+    (n) => {
+      // Régression : les mêmes joueurs se reposaient ensemble et se
+      // retrouvaient jusqu'à 6 fois adversaires sur 8 matchs (6 joueurs).
+      for (const seed of [1, 2, 3]) {
+        const { quality } = run({ n, courts: 1, target: 8, seed });
+        expect(quality.maxSameOpponent).toBe(quality.idealMaxSameOpponent);
+      }
+    },
+  );
+
+  it('bornes affichées pour 11 joueurs / 8 matchs : 33 répétitions minimum, idéal 2', () => {
+    const { quality } = run({ n: 11, courts: 2, target: 8 });
+    expect(quality.minPossibleOpponentRepeats).toBe(33);
+    expect(quality.idealMaxSameOpponent).toBe(2);
+  });
+});
+
 describe('generateSchedule – cas particuliers', () => {
   it('plus de terrains que nécessaire : seuls les terrains utiles sont utilisés', () => {
     const { playerIds, result } = run({ n: 6, courts: 3, target: 4 });
