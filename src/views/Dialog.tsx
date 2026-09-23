@@ -68,8 +68,12 @@ export function DialogProvider({ children }: { children: ReactNode }) {
                   {a.label}
                 </button>
               ))}
-              <button className="btn btn-ghost" onClick={() => close(null)}>
-                Annuler
+              <button
+                ref={request.options.actions.length === 0 ? firstButton : undefined}
+                className="btn btn-ghost"
+                onClick={() => close(null)}
+              >
+                {request.options.actions.length === 0 ? 'Fermer' : 'Annuler'}
               </button>
             </div>
           </div>

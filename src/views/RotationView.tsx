@@ -3,12 +3,18 @@ import {
   currentRotationIndex,
   isRotationComplete,
   setMatchScore,
+  setTimer,
   type Match,
   type Rotation,
   type Tournament,
 } from '../state/tournament';
+import { rotationText } from '../state/share';
+import { scoreWarning } from '../state/scoreCheck';
+import { useWakeLock } from './device';
 import { useConfirm } from './Dialog';
 import { formatDuration, teamLabel } from './format';
+import ShareButton from './ShareButton';
+import TimerCard from './TimerCard';
 
 interface Props {
   tournament: Tournament;
@@ -22,6 +28,8 @@ export default function RotationView({ tournament: t, names, onChange, onGoToCon
   const current = currentRotationIndex(t);
   // null = suivre automatiquement la rotation en cours.
   const [pinned, setPinned] = useState<number | null>(null);
+  // Écran allumé tant qu'un tournoi est en cours et que cet onglet est affiché.
+  useWakeLock(current >= 0);
 
   if (t.rotations.length === 0) {
     return (
@@ -86,6 +94,15 @@ export default function RotationView({ tournament: t, names, onChange, onGoToCon
         </button>
       )}
 
+      {shown === current && (
+        <TimerCard
+          rotation={current}
+          durationMinutes={matchMinutes}
+          timer={t.timer}
+          onChange={(timer) => onChange(setTimer(t, timer))}
+        />
+      )}
+
       {rotation.matches.length === 0 && (
         <div className="card">Aucun match pendant cette rotation (pas assez de joueurs présents).</div>
       )}
@@ -101,10 +118,17 @@ export default function RotationView({ tournament: t, names, onChange, onGoToCon
 
       <RestList rotation={rotation} names={names} />
 
+      <ShareButton label={`Copier la rotation ${shown + 1}`} getText={() => rotationText(t, shown, names)} />
+
       {next && shown === current && (
         <section className="card next">
           <h2>Prochaine rotation ({current + 2})</h2>
           <RotationSummary rotation={next} names={names} />
+          <ShareButton
+            label={`Copier la rotation ${current + 2}`}
+            className="btn btn-small"
+            getText={() => rotationText(t, current + 1, names)}
+          />
         </section>
       )}
     </div>
@@ -180,6 +204,7 @@ function MatchCard({
   }, [match.id, match.score]);
 
   const valid = /^\d+$/.test(a) && /^\d+$/.test(b);
+  const warning = valid ? scoreWarning(Number(a), Number(b), pointsPerMatch) : null;
 
   // Avec un total de points fixe, saisir un score complète l'autre.
   function change(side: 'a' | 'b', raw: string) {
@@ -236,12 +261,21 @@ function MatchCard({
           )}
         </div>
       </div>
+      {editing && warning && <p className="score-warning">⚠ {warning}</p>}
       {editing ? (
         <div className="btn-row">
           <button
             className="btn btn-primary btn-grow"
             disabled={!valid}
-            onClick={() => {
+            onClick={async () => {
+              if (warning) {
+                const ok = await confirm(
+                  `Vérifier le score du terrain ${match.court}`,
+                  `${warning}\n\nScore saisi : ${a}–${b}.`,
+                  'Valider quand même',
+                );
+                if (!ok) return;
+              }
               onSave({ a: Number(a), b: Number(b) });
               setEditing(false);
             }}

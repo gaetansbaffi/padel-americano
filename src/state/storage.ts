@@ -110,6 +110,11 @@ export function parseTournamentJson(text: string): Tournament {
   }
 
   const now = new Date().toISOString();
+  const tm = data.timer;
+  const timer =
+    isObj(tm) && isInt(tm.rotation) && isInt(tm.elapsedMs) && (tm.startedAt === null || isInt(tm.startedAt))
+      ? { rotation: tm.rotation, startedAt: tm.startedAt as number | null, elapsedMs: tm.elapsedMs }
+      : undefined;
   return {
     version: 1,
     config: {
@@ -131,6 +136,7 @@ export function parseTournamentJson(text: string): Tournament {
     rotations,
     planSignature: isStr(data.planSignature) ? data.planSignature : null,
     warnings: Array.isArray(data.warnings) ? data.warnings.filter(isStr) : [],
+    ...(timer ? { timer } : {}),
     createdAt: isStr(data.createdAt) ? data.createdAt : now,
     updatedAt: isStr(data.updatedAt) ? data.updatedAt : now,
   };

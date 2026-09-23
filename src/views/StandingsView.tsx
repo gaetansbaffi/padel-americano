@@ -1,5 +1,7 @@
 import { computeStandings } from '../engine';
+import { standingsText } from '../state/share';
 import { allMatches, type Tournament } from '../state/tournament';
+import ShareButton from './ShareButton';
 
 export default function StandingsView({ tournament: t }: { tournament: Tournament }) {
   const players = t.config.players;
@@ -59,6 +61,10 @@ export default function StandingsView({ tournament: t }: { tournament: Tournamen
           </table>
         </div>
       </section>
+      <ShareButton
+        label="Copier le classement"
+        getText={() => standingsText(t, new Map(players.map((p) => [p.id, p.name])))}
+      />
     </div>
   );
 }

@@ -7,6 +7,7 @@ import {
   type PlannedRotation,
   type Team,
 } from '../engine';
+import type { RotationTimer } from './timer';
 
 export interface Player {
   id: string;
@@ -54,6 +55,8 @@ export interface Tournament {
   /** Signature de la configuration ayant servi à générer le planning. */
   planSignature: string | null;
   warnings: string[];
+  /** Chrono de la rotation en cours (facultatif). */
+  timer?: RotationTimer;
   createdAt: string;
   updatedAt: string;
 }
@@ -197,6 +200,10 @@ export function setMatchScore(t: Tournament, matchId: string, score: MatchScore 
         : r,
     ),
   });
+}
+
+export function setTimer(t: Tournament, timer: RotationTimer | undefined): Tournament {
+  return touch({ ...t, timer });
 }
 
 export function updateConfig(t: Tournament, patch: Partial<TournamentConfig>): Tournament {

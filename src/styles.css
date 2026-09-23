@@ -969,3 +969,85 @@ button:focus-visible {
     width: 72px;
   }
 }
+
+/* --- Chrono ----------------------------------------------------------- */
+
+.timer {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--deep);
+  border: 2px solid var(--border);
+}
+
+.timer.running {
+  border-color: var(--primary);
+}
+
+.timer.over {
+  border-color: var(--error);
+}
+
+.timer-clock {
+  min-width: 4.2ch;
+  font-family: var(--font-display);
+  font-size: 3.4rem;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.timer.over .timer-clock {
+  color: var(--error);
+  animation: timer-blink 1s steps(2, start) infinite;
+}
+
+@keyframes timer-blink {
+  to {
+    opacity: 0.45;
+  }
+}
+
+.timer-side {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.timer-status {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.timer.running .timer-status {
+  color: var(--primary-ink);
+}
+
+.timer.over .timer-status {
+  color: var(--error);
+}
+
+/* --- Contrôle du score / copie ---------------------------------------- */
+
+.score-warning {
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.btn-copied {
+  background: var(--ok-soft);
+  border-color: var(--ok);
+  color: var(--ok);
+}
