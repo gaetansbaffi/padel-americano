@@ -1,5 +1,7 @@
 # Padel Americano
 
+**Application en ligne : https://gaetansbaffi.github.io/padel-americano/**
+
 Application web locale pour organiser un tournoi de padel au format Americano.
 React + TypeScript + Vite, tests Vitest. Aucun backend : tout est stocké dans
 le navigateur (localStorage), avec export/import JSON.
@@ -59,3 +61,8 @@ Publie `artifact/index.html` avec `dist-artifact/assets/app.js` et `app.css` com
 associés. React 18 est chargé depuis cdnjs (seul hôte autorisé) via les shims de
 `artifact/shims/`. Dans cet environnement, les téléchargements et `confirm()` sont
 bloqués : l'app utilise des dialogues intégrés et un export par copier-coller.
+
+## Déploiement GitHub Pages
+
+Chaque push sur `main` lance `.github/workflows/deploy.yml` : tests, build, puis mise en ligne
+sur https://gaetansbaffi.github.io/padel-americano/ (1 à 2 minutes).
