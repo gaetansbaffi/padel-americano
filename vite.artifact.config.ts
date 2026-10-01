@@ -10,6 +10,8 @@ const shim = (name: string) => `/artifact/shims/${name}`;
 export default defineConfig({
   plugins: [react()],
   base: './',
+  // public/ contient des pages annexes (ex. souvenirs/) propres au site GitHub Pages.
+  publicDir: false,
   resolve: {
     alias: [
       { find: /^react\/jsx-runtime$/, replacement: shim('jsx-runtime.ts') },

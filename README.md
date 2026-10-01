@@ -74,3 +74,7 @@ bloqués : l'app utilise des dialogues intégrés et un export par copier-coller
 
 Chaque push sur `main` lance `.github/workflows/deploy.yml` : tests, build, puis mise en ligne
 sur https://gaetansbaffi.github.io/padel-americano/ (1 à 2 minutes).
+
+Les fichiers de `public/` sont copiés tels quels dans le site. `public/souvenirs/index.html`
+est une page autonome (court film en Canvas + Web Audio), servie sur
+https://gaetansbaffi.github.io/padel-americano/souvenirs/ et non indexée par les moteurs.
